@@ -3,6 +3,7 @@ import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 
+
 IMAGE_SIZE = 128
 
 BATCH_SIZE = 64

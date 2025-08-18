@@ -45,14 +45,14 @@ class Discriminator(nn.Module):
         
         # Output head for the "normal" detector
         self.normal_detector = nn.Sequential(
-            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False)),
-            nn.Sigmoid()
+            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False))
+            # No Sigmoid activation here!
         )
         
         # Output head for the "forensic" detector
         self.forensic_detector = nn.Sequential(
-            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False)),
-            nn.Sigmoid()
+            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False))
+            # No Sigmoid activation here!
         )
         
         # Initialize weights

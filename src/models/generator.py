@@ -3,44 +3,48 @@ import torch.nn as nn
 from torch.nn.utils import spectral_norm
 
 # Define the network hyperparameters
-LATENT_DIM = 100  # Size of the input noise vector
-IMAGE_SIZE = 64   # Target image size
-IMAGE_CHANNELS = 3  # RGB images
-NGF = 64  # Size of feature maps in the generator
+LATENT_DIM = 100
+IMAGE_SIZE = 128 # Changed to 128 to match your dataset
+IMAGE_CHANNELS = 3
+NGF = 64
 
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
         
-        # Use spectral normalization for better training stability
         self.main = nn.Sequential(
             # Input is latent vector (100x1x1)
-            spectral_norm(nn.ConvTranspose2d(LATENT_DIM, NGF * 8, 4, 1, 0, bias=False)),
+            spectral_norm(nn.ConvTranspose2d(LATENT_DIM, NGF * 16, 4, 1, 0, bias=False)),
+            nn.BatchNorm2d(NGF * 16),
+            nn.ReLU(True),
+            # Size: (NGF*16) x 4 x 4
+            
+            spectral_norm(nn.ConvTranspose2d(NGF * 16, NGF * 8, 4, 2, 1, bias=False)),
             nn.BatchNorm2d(NGF * 8),
             nn.ReLU(True),
-            # Size: (NGF*8) x 4 x 4
+            # Size: (NGF*8) x 8 x 8
             
             spectral_norm(nn.ConvTranspose2d(NGF * 8, NGF * 4, 4, 2, 1, bias=False)),
             nn.BatchNorm2d(NGF * 4),
             nn.ReLU(True),
-            # Size: (NGF*4) x 8 x 8
+            # Size: (NGF*4) x 16 x 16
             
             spectral_norm(nn.ConvTranspose2d(NGF * 4, NGF * 2, 4, 2, 1, bias=False)),
             nn.BatchNorm2d(NGF * 2),
             nn.ReLU(True),
-            # Size: (NGF*2) x 16 x 16
+            # Size: (NGF*2) x 32 x 32
             
+            # --- The new layer to upsample to 128x128 ---
             spectral_norm(nn.ConvTranspose2d(NGF * 2, NGF, 4, 2, 1, bias=False)),
             nn.BatchNorm2d(NGF),
             nn.ReLU(True),
-            # Size: NGF x 32 x 32
+            # Size: NGF x 64 x 64
             
             spectral_norm(nn.ConvTranspose2d(NGF, IMAGE_CHANNELS, 4, 2, 1, bias=False)),
             nn.Tanh()
-            # Final output size: IMAGE_CHANNELS x 64 x 64
+            # Final output size: IMAGE_CHANNELS x 128 x 128
         )
         
-        # Initialize weights using Xavier/Glorot initialization
         self._initialize_weights()
     
     def _initialize_weights(self):
