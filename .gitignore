@@ -1,5 +1,15 @@
-data/AI-Generated Images
+data/AI-Generated Images/*
 
-data/processed
+data/processed/resized/faces/*
 
-data/Real Images
+data/Real Images/*
+
+src/models/__pycache__
+
+output/checkpoints/*
+
+output/generated_images/*
+
+output/plots/*
+
+src/utils/__pycache__
