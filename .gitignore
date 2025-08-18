@@ -1,15 +1,20 @@
 data/AI-Generated Images/*
+!data/AI-Generated Images/.gitkeep
 
 data/processed/resized/faces/*
+!data/processed/resized/faces/.gitkeep
 
 data/Real Images/*
+!data/Real Images/.gitkeep
 
-src/models/__pycache__
+src/models/__pycache__/
+src/utils/__pycache__/
 
 output/checkpoints/*
+!output/checkpoints/.gitkeep
 
 output/generated_images/*
+!output/generated_images/.gitkeep
 
 output/plots/*
-
-src/utils/__pycache__
+!output/plots/.gitkeep
