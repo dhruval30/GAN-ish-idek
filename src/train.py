@@ -83,9 +83,9 @@ def train():
     f_optimizer = optim.Adam(forensic_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
 
     # --- DYNAMIC_LR: Initialize schedulers to reduce LR on plateau ---
-    g_scheduler = ReduceLROnPlateau(g_optimizer, 'min', factor=0.5, patience=3, verbose=True)
-    d_scheduler = ReduceLROnPlateau(d_optimizer, 'min', factor=0.5, patience=3, verbose=True)
-    f_scheduler = ReduceLROnPlateau(f_optimizer, 'min', factor=0.5, patience=3, verbose=True)
+    g_scheduler = ReduceLROnPlateau(g_optimizer, 'min', factor=0.5, patience=3)
+    d_scheduler = ReduceLROnPlateau(d_optimizer, 'min', factor=0.5, patience=3)
+    f_scheduler = ReduceLROnPlateau(f_optimizer, 'min', factor=0.5, patience=3)
     
     fixed_noise = torch.randn(64, LATENT_DIM, 1, 1, device=device)
 
