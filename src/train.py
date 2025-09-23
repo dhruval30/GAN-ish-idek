@@ -95,7 +95,7 @@ def compute_generator_loss(generator, normal_discriminator, forensic_discriminat
 
 def train():
     # --- Device Configuration ---
-    if torch.backends.cuda.is_available():
+    if torch.cuda.is_available(): # Corrected line
         device = torch.device("cuda")
     elif torch.mps.is_available():
         device = torch.device("mps")
