@@ -25,6 +25,7 @@ BATCH_SIZE = 64
 GRADIENT_PENALTY_WEIGHT = 10.0
 NUM_D_STEPS = 5
 NUM_G_STEPS = 1
+LAMBDA_FORENSIC = 0.1 
 
 # --- Directory setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,7 +60,8 @@ def compute_generator_loss(generator, normal_discriminator, forensic_discriminat
     fake_images = generator(noise)
     normal_score = normal_discriminator(fake_images)
     forensic_score = forensic_discriminator(fake_images)
-    return -torch.mean(normal_score) - torch.mean(forensic_score)
+    return -torch.mean(normal_score) - LAMBDA_FORENSIC * torch.mean(forensic_score)
+
 
 
 def train():
