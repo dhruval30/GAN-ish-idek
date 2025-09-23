@@ -101,10 +101,10 @@ def compute_generator_loss(generator, discriminator, noise, device):
 
 def train():
     # --- Device Configuration ---
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
+    if torch.backends.cuda.is_available():
         device = torch.device("cuda")
+    elif torch.mps.is_available():
+        device = torch.device("mps")
     else:
         device = torch.device("cpu")
     
