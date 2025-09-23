@@ -72,9 +72,9 @@ def train():
     normal_discriminator = Discriminator().to(device)
     forensic_discriminator = ForensicDiscriminator().to(device)
 
-    # Load data
+    # --- FIX: Calling get_dataloader with a single argument to match your file ---
     data_dir = os.path.join(project_root, 'data', 'processed', 'resized')
-    dataloader = get_dataloader(data_dir, BATCH_SIZE)
+    dataloader = get_dataloader(data_dir)
     print("Data loader created.")
 
     # --- Optimizers & Dynamic LR Schedulers ---
@@ -96,6 +96,7 @@ def train():
     for epoch in range(GENERATOR_HEAD_START_EPOCHS):
         total_loss_g_pretrain = 0.0
         for i, (real_images, _) in enumerate(dataloader):
+            real_images = real_images.to(device)
             batch_size = real_images.size(0)
             g_optimizer.zero_grad()
             noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device)
