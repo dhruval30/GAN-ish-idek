@@ -26,9 +26,9 @@ class ResBlockDown(nn.Module):
         out += self.downsample(self.shortcut(x))
         return nn.LeakyReLU(0.2)(out)
 
-class Discriminator(nn.Module):
+class ForensicDiscriminator(nn.Module):
     def __init__(self):
-        super(Discriminator, self).__init__()
+        super(ForensicDiscriminator, self).__init__()
         
         self.main = nn.Sequential(
             # Input is IMAGE_CHANNELS x 128 x 128
@@ -48,7 +48,6 @@ class Discriminator(nn.Module):
         self._initialize_weights()
     
     def _initialize_weights(self):
-        """Initialize weights using best practices"""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_uniform_(m.weight)
