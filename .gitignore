@@ -18,3 +18,5 @@ output/generated_images/*
 
 output/plots/*
 !output/plots/.gitkeep
+
+outputFinal
