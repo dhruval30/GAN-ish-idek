@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 IMAGE_SIZE = 128
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 
 transform = transforms.Compose([
     transforms.Resize(IMAGE_SIZE),

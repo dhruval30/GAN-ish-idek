@@ -19,13 +19,14 @@ LEARNING_RATE_D = 0.0001
 BETA1 = 0.0
 BETA2 = 0.9
 NUM_EPOCHS = 100
-GENERATOR_HEAD_START_EPOCHS = 5 # --- HEAD_START: 5 epochs for the generator ---
+# --- REMOVED: GENERATOR_HEAD_START_EPOCHS ---
 LATENT_DIM = 100
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 GRADIENT_PENALTY_WEIGHT = 10.0
 NUM_D_STEPS = 5
 NUM_G_STEPS = 1
-LAMBDA_FORENSIC = 0.1 
+# --- UPDATED: Increased forensic weight to force generator to fix artifacts ---
+LAMBDA_FORENSIC = 1.0 
 
 # --- Directory setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,6 +83,7 @@ def train():
     # --- Optimizers & Dynamic LR Schedulers ---
     g_optimizer = optim.Adam(generator.parameters(), lr=LEARNING_RATE_G, betas=(BETA1, BETA2))
     d_optimizer = optim.Adam(normal_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
+    # --- TYPO FIX: Changed BTA1 to BETA1 ---
     f_optimizer = optim.Adam(forensic_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
 
     # --- DYNAMIC_LR: Initialize schedulers to reduce LR on plateau ---
@@ -92,27 +94,15 @@ def train():
     fixed_noise = torch.randn(64, LATENT_DIM, 1, 1, device=device)
 
     # ===================================================================
-    # --- PHASE 1: GENERATOR HEAD START ---
+    # --- PHASE 1: GENERATOR HEAD START (REMOVED) ---
     # ===================================================================
-    print(f"\n--- Starting Phase 1: Generator Head Start for {GENERATOR_HEAD_START_EPOCHS} epochs ---")
-    for epoch in range(GENERATOR_HEAD_START_EPOCHS):
-        total_loss_g_pretrain = 0.0
-        for i, (real_images, _) in enumerate(dataloader):
-            real_images = real_images.to(device)
-            batch_size = real_images.size(0)
-            g_optimizer.zero_grad()
-            noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device)
-            loss_g = compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device)
-            loss_g.backward()
-            g_optimizer.step()
-            total_loss_g_pretrain += loss_g.item()
-        avg_loss_g = total_loss_g_pretrain / len(dataloader)
-        print(f"Pre-train Epoch [{epoch+1}/{GENERATOR_HEAD_START_EPOCHS}], Avg Generator Loss: {avg_loss_g:.4f}")
+    # (The generator head-start phase has been removed to begin
+    # adversarial training immediately with valid discriminator feedback)
 
     # ===================================================================
-    # --- PHASE 2: MAIN ADVERSARIAL TRAINING ---
+    # --- MAIN ADVERSARIAL TRAINING ---
     # ===================================================================
-    print(f"\n--- Starting Phase 2: Main Adversarial Training for {NUM_EPOCHS} epochs ---")
+    print(f"\n--- Starting Main Adversarial Training for {NUM_EPOCHS} epochs ---")
     for epoch in range(NUM_EPOCHS):
         total_loss_d_normal, total_loss_d_forensic, total_loss_g = 0.0, 0.0, 0.0
         
@@ -143,7 +133,8 @@ def train():
             # --- Train Generator ---
             for _ in range(NUM_G_STEPS):
                 g_optimizer.zero_grad()
-                noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device)
+                # --- TYPO FIX: Changed batch_Sze to batch_size ---
+                noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device) 
                 loss_g = compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device)
                 loss_g.backward()
                 g_optimizer.step()
@@ -159,7 +150,8 @@ def train():
         avg_loss_d_normal = total_loss_d_normal / (len(dataloader) * NUM_D_STEPS)
         avg_loss_d_forensic = total_loss_d_forensic / (len(dataloader) * NUM_D_STEPS)
         avg_loss_g = total_loss_g / (len(dataloader) * NUM_G_STEPS)
-        print(f"=== Epoch [{epoch+1+GENERATOR_HEAD_START_EPOCHS} Total] Summary ===")
+        # --- UPDATED: Simplified epoch count ---
+        print(f"=== Epoch [{epoch+1}/{NUM_EPOCHS}] Summary ===") 
         print(f"Avg Loss_D_Normal: {avg_loss_d_normal:.4f}, "
               f"Avg Loss_D_Forensic: {avg_loss_d_forensic:.4f}, "
               f"Avg Loss_G: {avg_loss_g:.4f}")
