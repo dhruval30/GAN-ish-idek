@@ -6,6 +6,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.utils import save_image
 import os
+from copy import deepcopy 
 
 # Import your models and data loader
 from models.generator import Generator
@@ -13,20 +14,42 @@ from models.discriminator import Discriminator
 from models.forensic_discriminator import ForensicDiscriminator
 from utils.data_loader import get_dataloader
 
-# --- Hyperparameters reflecting your strategy ---
-LEARNING_RATE_G = 0.0002  # --- LR_RATIO: Set G:D to 2:1 ---
-LEARNING_RATE_D = 0.0001
+# --- 🚀 SET THIS TO YOUR CHECKPOINT FILE ---
+# Set to None to train from scratch
+CHECKPOINT_TO_LOAD = "./output/checkpoints/gan_checkpoint_epoch_30.pth" 
+# e.g., "./output/checkpoints/gan_checkpoint_epoch_30.pth"
+# ---------------------------------------------
+
+# --- EMA Helper Class ---
+class EMA:
+    """Exponential Moving Average for Generator weights"""
+    def __init__(self, model, decay=0.999):
+        self.model = deepcopy(model)
+        self.model.eval() 
+        self.decay = decay
+
+    def update(self, model):
+        with torch.no_grad():
+            for ema_param, param in zip(self.model.parameters(), model.parameters()):
+                ema_param.data.mul_(self.decay).add_(param.data, alpha=1 - self.decay)
+
+# --- Hyperparameters ---
+LEARNING_RATE_G = 0.001
+LEARNING_RATE_D = 0.0002
 BETA1 = 0.0
 BETA2 = 0.9
 NUM_EPOCHS = 100
-# --- REMOVED: GENERATOR_HEAD_START_EPOCHS ---
 LATENT_DIM = 100
-BATCH_SIZE = 256
+BATCH_SIZE = 192
 GRADIENT_PENALTY_WEIGHT = 10.0
 NUM_D_STEPS = 5
 NUM_G_STEPS = 1
-# --- UPDATED: Increased forensic weight to force generator to fix artifacts ---
-LAMBDA_FORENSIC = 1.0 
+EMA_BETA = 0.999 
+
+# --- Dynamic Lambda Schedule ---
+LAMBDA_FORENSIC_START = 0.1
+LAMBDA_FORENSIC_END = 0.5
+LAMBDA_SCHEDULE_EPOCH = 20 
 
 # --- Directory setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,16 +75,16 @@ def gradient_penalty(discriminator, real_images, fake_images, device):
 
 def compute_discriminator_loss(discriminator, real_images, fake_images, device):
     real_score = discriminator(real_images)
-    fake_score = discriminator(fake_images)
+    fake_score = discriminator(fake_images.detach())
     loss_wgan = -torch.mean(real_score) + torch.mean(fake_score)
     gp = gradient_penalty(discriminator, real_images, fake_images.detach(), device)
     return loss_wgan + GRADIENT_PENALTY_WEIGHT * gp
 
-def compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device):
+def compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device, current_lambda):
     fake_images = generator(noise)
     normal_score = normal_discriminator(fake_images)
     forensic_score = forensic_discriminator(fake_images)
-    return -torch.mean(normal_score) - LAMBDA_FORENSIC * torch.mean(forensic_score)
+    return -torch.mean(normal_score) - current_lambda * torch.mean(forensic_score)
 
 
 
@@ -75,45 +98,77 @@ def train():
     normal_discriminator = Discriminator().to(device)
     forensic_discriminator = ForensicDiscriminator().to(device)
 
-    # --- FIX: Calling get_dataloader with a single argument to match your file ---
-    data_dir = os.path.join(project_root, 'data', 'processed', 'resized')
-    dataloader = get_dataloader(data_dir)
-    print("Data loader created.")
-
-    # --- Optimizers & Dynamic LR Schedulers ---
+    # --- Initialize Optimizers ---
     g_optimizer = optim.Adam(generator.parameters(), lr=LEARNING_RATE_G, betas=(BETA1, BETA2))
     d_optimizer = optim.Adam(normal_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
-    # --- TYPO FIX: Changed BTA1 to BETA1 ---
     f_optimizer = optim.Adam(forensic_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
 
-    # --- DYNAMIC_LR: Initialize schedulers to reduce LR on plateau ---
+    # --- Schedulers ---
     g_scheduler = ReduceLROnPlateau(g_optimizer, 'min', factor=0.5, patience=3)
     d_scheduler = ReduceLROnPlateau(d_optimizer, 'min', factor=0.5, patience=3)
     f_scheduler = ReduceLROnPlateau(f_optimizer, 'min', factor=0.5, patience=3)
     
     fixed_noise = torch.randn(64, LATENT_DIM, 1, 1, device=device)
+    start_epoch = 0
 
-    # ===================================================================
-    # --- PHASE 1: GENERATOR HEAD START (REMOVED) ---
-    # ===================================================================
-    # (The generator head-start phase has been removed to begin
-    # adversarial training immediately with valid discriminator feedback)
+    # --- 🚀 ADDED: Checkpoint Loading Logic ---
+    if CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD):
+        print(f"--- Loading checkpoint: {CHECKPOINT_TO_LOAD} ---")
+        checkpoint = torch.load(CHECKPOINT_TO_LOAD, map_location=device)
+        
+        generator.load_state_dict(checkpoint['generator_state_dict'])
+        normal_discriminator.load_state_dict(checkpoint['normal_discriminator_state_dict'])
+        forensic_discriminator.load_state_dict(checkpoint['forensic_discriminator_state_dict'])
+        
+        g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
+        d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
+        f_optimizer.load_state_dict(checkpoint['f_optimizer_state_dict'])
+        
+        start_epoch = checkpoint['epoch']
+        print(f"--- Resuming training from epoch {start_epoch + 1} ---")
+    
+    # --- 🚀 CRITICAL: Initialize EMA *after* loading generator weights ---
+    print("Initializing EMA generator...")
+    generator_ema = EMA(generator, decay=EMA_BETA)
+    generator_ema.model.to(device)
+
+    # --- 🚀 ADDED: Logic to load EMA weights *if they exist* ---
+    if CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD) and 'generator_ema_state_dict' in checkpoint:
+        print("--- Found EMA weights in checkpoint. Loading. ---")
+        generator_ema.model.load_state_dict(checkpoint['generator_ema_state_dict'])
+    elif CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD):
+        print("--- No EMA weights found. EMA is now synced to loaded generator. ---")
+
+    
+    data_dir = os.path.join(project_root, 'data', 'processed', 'resized')
+    dataloader = get_dataloader(data_dir, BATCH_SIZE) 
+    print(f"Data loader created with batch size {BATCH_SIZE}.")
 
     # ===================================================================
     # --- MAIN ADVERSARIAL TRAINING ---
     # ===================================================================
     print(f"\n--- Starting Main Adversarial Training for {NUM_EPOCHS} epochs ---")
-    for epoch in range(NUM_EPOCHS):
+    print(f"G_LR: {LEARNING_RATE_G}, D_LR: {LEARNING_RATE_D}, Betas: ({BETA1}, {BETA2})")
+    print(f"Dynamic Lambda: {LAMBDA_FORENSIC_START} (epochs 1-{LAMBDA_SCHEDULE_EPOCH-1}), then {LAMBDA_FORENSIC_END}")
+    
+    # --- 🚀 UPDATED: Start from the correct epoch ---
+    for epoch in range(start_epoch, NUM_EPOCHS):
         total_loss_d_normal, total_loss_d_forensic, total_loss_g = 0.0, 0.0, 0.0
+        
+        # --- Set dynamic lambda for the current epoch ---
+        if (epoch + 1) < LAMBDA_SCHEDULE_EPOCH:
+            current_lambda = LAMBDA_FORENSIC_START
+        else:
+            current_lambda = LAMBDA_FORENSIC_END
         
         for i, (real_images, _) in enumerate(dataloader):
             real_images = real_images.to(device)
-            batch_size = real_images.size(0)
+            current_batch_size = real_images.size(0) 
             
             # --- Train Normal Discriminator ---
             for _ in range(NUM_D_STEPS):
                 d_optimizer.zero_grad()
-                noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device)
+                noise = torch.randn(current_batch_size, LATENT_DIM, 1, 1, device=device)
                 fake_images = generator(noise).detach()
                 loss_d_normal = compute_discriminator_loss(normal_discriminator, real_images, fake_images, device)
                 loss_d_normal.backward()
@@ -123,7 +178,7 @@ def train():
             # --- Train Forensic Discriminator ---
             for _ in range(NUM_D_STEPS):
                 f_optimizer.zero_grad()
-                noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device)
+                noise = torch.randn(current_batch_size, LATENT_DIM, 1, 1, device=device)
                 fake_images = generator(noise).detach()
                 loss_d_forensic = compute_discriminator_loss(forensic_discriminator, real_images, fake_images, device)
                 loss_d_forensic.backward()
@@ -133,11 +188,14 @@ def train():
             # --- Train Generator ---
             for _ in range(NUM_G_STEPS):
                 g_optimizer.zero_grad()
-                # --- TYPO FIX: Changed batch_Sze to batch_size ---
-                noise = torch.randn(batch_size, LATENT_DIM, 1, 1, device=device) 
-                loss_g = compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device)
+                noise = torch.randn(current_batch_size, LATENT_DIM, 1, 1, device=device)
+                loss_g = compute_generator_loss(generator, normal_discriminator, forensic_discriminator, noise, device, current_lambda)
                 loss_g.backward()
                 g_optimizer.step()
+                
+                # --- Update the EMA generator's weights ---
+                generator_ema.update(generator)
+                
                 total_loss_g += loss_g.item()
 
             if i % 10 == 0 or i == len(dataloader) - 1:
@@ -150,28 +208,29 @@ def train():
         avg_loss_d_normal = total_loss_d_normal / (len(dataloader) * NUM_D_STEPS)
         avg_loss_d_forensic = total_loss_d_forensic / (len(dataloader) * NUM_D_STEPS)
         avg_loss_g = total_loss_g / (len(dataloader) * NUM_G_STEPS)
-        # --- UPDATED: Simplified epoch count ---
-        print(f"=== Epoch [{epoch+1}/{NUM_EPOCHS}] Summary ===") 
+        print(f"=== Epoch [{epoch+1}/{NUM_EPOCHS}] Summary ===")
         print(f"Avg Loss_D_Normal: {avg_loss_d_normal:.4f}, "
               f"Avg Loss_D_Forensic: {avg_loss_d_forensic:.4f}, "
-              f"Avg Loss_G: {avg_loss_g:.4f}")
+              f"Avg Loss_G: {avg_loss_g:.4f}, "
+              f"Current Lambda: {current_lambda:.2f}")
 
-        # --- DYNAMIC_LR: Step the schedulers based on the epoch's average loss ---
+        # --- DYNAMIC_LR: Step the schedulers ---
         g_scheduler.step(avg_loss_g)
         d_scheduler.step(avg_loss_d_normal)
         f_scheduler.step(avg_loss_d_forensic)
         
         # --- Save generated images from fixed noise ---
         with torch.no_grad():
-            generator.eval()
-            fake_samples = generator(fixed_noise).detach().cpu()
+            # --- Use the stable EMA generator for saving ---
+            generator_ema.model.eval()
+            fake_samples = generator_ema.model(fixed_noise).detach().cpu()
             save_image(fake_samples, os.path.join(OUTPUT_DIR, 'generated_images', f'epoch_{epoch+1}.png'), normalize=True, nrow=8)
-            generator.train()
 
         # --- Save checkpoints ---
         if (epoch + 1) % 5 == 0:
             torch.save({
                 'generator_state_dict': generator.state_dict(),
+                'generator_ema_state_dict': generator_ema.model.state_dict(), # --- Save EMA weights
                 'normal_discriminator_state_dict': normal_discriminator.state_dict(),
                 'forensic_discriminator_state_dict': forensic_discriminator.state_dict(),
                 'g_optimizer_state_dict': g_optimizer.state_dict(),
