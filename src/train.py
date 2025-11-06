@@ -25,7 +25,7 @@ BATCH_SIZE = 64
 GRADIENT_PENALTY_WEIGHT = 10.0
 NUM_D_STEPS = 5
 NUM_G_STEPS = 1
-LAMBDA_FORENSIC = 0.1 
+LAMBDA_FORENSIC = 0.2
 
 # --- Directory setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
