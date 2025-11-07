@@ -75,10 +75,6 @@ the `inference.py` script is set up to load a saved checkpoint and generate new 
 
 ### 4\. About This Prototype
 
-this prototype successfully implements a stable `WGAN-GP` training process with a custom dual-detector discriminator. it demonstrates a working solution to the problem of training instability and is a strong foundation for future research into producing truly forensically indistinguishable synthetic data.
-
-### 5\. Next Steps
-
-there will be more updates to this, we'll improve the generator, detector architectures, add another additional forensic detector, experiment with different loss functions, optimise the process, optimise it for gpu training, etc. stay tuned for more ...
+this prototype successfully implements a stable `WGAN-GP` training process with a custom dual-detector discriminator, with a forensic detector. it demonstrates a working solution to the problem of training instability and is a strong foundation for future research into producing truly forensically indistinguishable synthetic data.
 
 ![Model Training Progression](progression.gif)
