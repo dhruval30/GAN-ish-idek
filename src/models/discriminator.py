@@ -1,89 +1,63 @@
+# file: models/discriminator.py
+
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
 
-# Define the network hyperparameters
-IMAGE_SIZE = 64
+# Hyperparameters
 IMAGE_CHANNELS = 3
-NDF = 48  # Reduced from 64 to 48 to decrease discriminator capacity
+NDF = 64
+
+class ResBlockDown(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ResBlockDown, self).__init__()
+        self.conv1 = spectral_norm(nn.Conv2d(in_channels, out_channels, 3, 1, 1, bias=False))
+        self.conv2 = spectral_norm(nn.Conv2d(out_channels, out_channels, 3, 1, 1, bias=False))
+        self.downsample = nn.AvgPool2d(2)
+        
+        # --- EXPERIMENTAL: Added InstanceNorm2d for potential stability ---
+        self.in1 = nn.InstanceNorm2d(out_channels, affine=True)
+        self.in2 = nn.InstanceNorm2d(out_channels, affine=True)
+        
+        self.shortcut = nn.Sequential(
+            nn.AvgPool2d(2),
+            spectral_norm(nn.Conv2d(in_channels, out_channels, 1, 1, bias=False))
+        )
+
+    def forward(self, x):
+        shortcut_out = self.shortcut(x)
+        
+        out = self.conv1(x)
+        out = self.in1(out) # Apply InstanceNorm
+        out = nn.LeakyReLU(0.2, inplace=True)(out)
+        
+        out = self.conv2(out)
+        out = self.in2(out) # Apply InstanceNorm
+        out = self.downsample(out)
+        
+        out += shortcut_out
+        return nn.LeakyReLU(0.2, inplace=True)(out)
 
 class Discriminator(nn.Module):
-    def __init__(self, use_spectral_norm=True):
+    def __init__(self):
         super(Discriminator, self).__init__()
         
-        # Helper function to optionally apply spectral normalization
-        def maybe_spectral_norm(layer):
-            return spectral_norm(layer) if use_spectral_norm else layer
-        
-        # Shared convolutional layers to extract features (reduced capacity)
-        self.shared_layers = nn.Sequential(
-            # Input is IMAGE_CHANNELS x 64 x 64
-            maybe_spectral_norm(nn.Conv2d(IMAGE_CHANNELS, NDF, 4, 2, 1, bias=False)),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),  # Add dropout for regularization
-            # Size: NDF x 32 x 32
-            
-            maybe_spectral_norm(nn.Conv2d(NDF, NDF * 2, 4, 2, 1, bias=False)),
-            nn.BatchNorm2d(NDF * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-            # Size: (NDF*2) x 16 x 16
-            
-            maybe_spectral_norm(nn.Conv2d(NDF * 2, NDF * 4, 4, 2, 1, bias=False)),
-            nn.BatchNorm2d(NDF * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-            # Size: (NDF*4) x 8 x 8
-            
-            # Removed one layer to reduce capacity further
-            maybe_spectral_norm(nn.Conv2d(NDF * 4, NDF * 4, 4, 2, 1, bias=False)),  # Keep same channels
-            nn.BatchNorm2d(NDF * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-            # Final shared feature size: (NDF*4) x 4 x 4
+        self.main = nn.Sequential(
+            # --- ARCH_MISMATCH_FIX: Correctly handles 128x128 images ---
+            # Input: 3 x 128 x 128
+            ResBlockDown(IMAGE_CHANNELS, NDF),      # -> NDF x 64 x 64
+            ResBlockDown(NDF, NDF * 2),             # -> NDF*2 x 32 x 32
+            ResBlockDown(NDF * 2, NDF * 4),         # -> NDF*4 x 16 x 16
+            ResBlockDown(NDF * 4, NDF * 8),         # -> NDF*8 x 8 x 8
+            ResBlockDown(NDF * 8, NDF * 8),         # -> NDF*8 x 4 x 4
+            spectral_norm(nn.Conv2d(NDF * 8, 1, 4, 1, 0, bias=False)) # -> 1 x 1 x 1
         )
-        
-        # Output head for the "normal" detector
-        self.normal_detector = nn.Sequential(
-            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False))
-            # No Sigmoid activation here!
-        )
-        
-        # Output head for the "forensic" detector
-        self.forensic_detector = nn.Sequential(
-            maybe_spectral_norm(nn.Conv2d(NDF * 4, 1, 4, 1, 0, bias=False))
-            # No Sigmoid activation here!
-        )
-        
-        # Initialize weights
         self._initialize_weights()
     
     def _initialize_weights(self):
-        """Initialize weights using best practices"""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-    
+
     def forward(self, input):
-        # Process the input image through the shared layers
-        features = self.shared_layers(input)
-        
-        # Get outputs from both detectors
-        normal_output = self.normal_detector(features)
-        forensic_output = self.forensic_detector(features)
-        
-        # Take the mean over the spatial dimensions to get a single probability per image
-        normal_output = torch.mean(normal_output, dim=(2, 3))
-        forensic_output = torch.mean(forensic_output, dim=(2, 3))
-        
-        # Flatten the output to a 1D tensor
-        return normal_output.view(-1), forensic_output.view(-1)
-    
-    def get_features(self, input):
-        """Return intermediate features for feature matching loss if needed"""
-        return self.shared_layers(input)
+        return self.main(input).view(-1)
