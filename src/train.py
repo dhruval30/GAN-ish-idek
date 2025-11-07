@@ -1,5 +1,3 @@
-# file: train.py
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,12 +12,6 @@ from models.discriminator import Discriminator
 from models.forensic_discriminator import ForensicDiscriminator
 from utils.data_loader import get_dataloader
 
-# --- 🚀 SET THIS TO YOUR CHECKPOINT FILE ---
-# Set to None to train from scratch
-CHECKPOINT_TO_LOAD = "./output/checkpoints/gan_checkpoint_epoch_30.pth" 
-# e.g., "./output/checkpoints/gan_checkpoint_epoch_30.pth"
-# ---------------------------------------------
-
 # --- EMA Helper Class ---
 class EMA:
     """Exponential Moving Average for Generator weights"""
@@ -33,23 +25,25 @@ class EMA:
             for ema_param, param in zip(self.model.parameters(), model.parameters()):
                 ema_param.data.mul_(self.decay).add_(param.data, alpha=1 - self.decay)
 
-# --- Hyperparameters ---
+# --- Hyperparameters reflecting your strategy ---
 LEARNING_RATE_G = 0.001
 LEARNING_RATE_D = 0.0002
 BETA1 = 0.0
-BETA2 = 0.9
+BETA2 = 0.9  # The STABLE Beta2 value
 NUM_EPOCHS = 100
 LATENT_DIM = 100
 BATCH_SIZE = 192
 GRADIENT_PENALTY_WEIGHT = 10.0
 NUM_D_STEPS = 5
 NUM_G_STEPS = 1
-EMA_BETA = 0.999 
+EMA_BETA = 0.999 # Standard EMA decay
+# --- YOUR IDEA: Start EMA after 5 epochs ---
+EMA_START_EPOCH = 10
 
 # --- Dynamic Lambda Schedule ---
 LAMBDA_FORENSIC_START = 0.1
 LAMBDA_FORENSIC_END = 0.5
-LAMBDA_SCHEDULE_EPOCH = 20 
+LAMBDA_SCHEDULE_EPOCH = 35 # Epoch to increase lambda
 
 # --- Directory setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,51 +92,29 @@ def train():
     normal_discriminator = Discriminator().to(device)
     forensic_discriminator = ForensicDiscriminator().to(device)
 
-    # --- Initialize Optimizers ---
+    # --- Initialize the EMA generator ---
+    print(f"Initializing EMA generator (will start at epoch {EMA_START_EPOCH+1})")
+    generator_ema = EMA(generator, decay=EMA_BETA)
+    generator_ema.model.to(device)
+    ema_active = False # --- Flag to control EMA updates ---
+
+    data_dir = os.path.join(project_root, 'data', 'processed', 'resized')
+    
+    # --- This assumes your data_loader.py accepts batch_size ---
+    dataloader = get_dataloader(data_dir, BATCH_SIZE) 
+    print(f"Data loader created with batch size {BATCH_SIZE}.")
+
+    # --- Optimizers with STABLE LRs and Betas ---
     g_optimizer = optim.Adam(generator.parameters(), lr=LEARNING_RATE_G, betas=(BETA1, BETA2))
     d_optimizer = optim.Adam(normal_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
     f_optimizer = optim.Adam(forensic_discriminator.parameters(), lr=LEARNING_RATE_D, betas=(BETA1, BETA2))
 
-    # --- Schedulers ---
+    # --- Schedulers (still using ReduceLROnPlateau) ---
     g_scheduler = ReduceLROnPlateau(g_optimizer, 'min', factor=0.5, patience=3)
     d_scheduler = ReduceLROnPlateau(d_optimizer, 'min', factor=0.5, patience=3)
     f_scheduler = ReduceLROnPlateau(f_optimizer, 'min', factor=0.5, patience=3)
     
     fixed_noise = torch.randn(64, LATENT_DIM, 1, 1, device=device)
-    start_epoch = 0
-
-    # --- 🚀 ADDED: Checkpoint Loading Logic ---
-    if CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD):
-        print(f"--- Loading checkpoint: {CHECKPOINT_TO_LOAD} ---")
-        checkpoint = torch.load(CHECKPOINT_TO_LOAD, map_location=device)
-        
-        generator.load_state_dict(checkpoint['generator_state_dict'])
-        normal_discriminator.load_state_dict(checkpoint['normal_discriminator_state_dict'])
-        forensic_discriminator.load_state_dict(checkpoint['forensic_discriminator_state_dict'])
-        
-        g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
-        d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
-        f_optimizer.load_state_dict(checkpoint['f_optimizer_state_dict'])
-        
-        start_epoch = checkpoint['epoch']
-        print(f"--- Resuming training from epoch {start_epoch + 1} ---")
-    
-    # --- 🚀 CRITICAL: Initialize EMA *after* loading generator weights ---
-    print("Initializing EMA generator...")
-    generator_ema = EMA(generator, decay=EMA_BETA)
-    generator_ema.model.to(device)
-
-    # --- 🚀 ADDED: Logic to load EMA weights *if they exist* ---
-    if CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD) and 'generator_ema_state_dict' in checkpoint:
-        print("--- Found EMA weights in checkpoint. Loading. ---")
-        generator_ema.model.load_state_dict(checkpoint['generator_ema_state_dict'])
-    elif CHECKPOINT_TO_LOAD and os.path.exists(CHECKPOINT_TO_LOAD):
-        print("--- No EMA weights found. EMA is now synced to loaded generator. ---")
-
-    
-    data_dir = os.path.join(project_root, 'data', 'processed', 'resized')
-    dataloader = get_dataloader(data_dir, BATCH_SIZE) 
-    print(f"Data loader created with batch size {BATCH_SIZE}.")
 
     # ===================================================================
     # --- MAIN ADVERSARIAL TRAINING ---
@@ -151,9 +123,15 @@ def train():
     print(f"G_LR: {LEARNING_RATE_G}, D_LR: {LEARNING_RATE_D}, Betas: ({BETA1}, {BETA2})")
     print(f"Dynamic Lambda: {LAMBDA_FORENSIC_START} (epochs 1-{LAMBDA_SCHEDULE_EPOCH-1}), then {LAMBDA_FORENSIC_END}")
     
-    # --- 🚀 UPDATED: Start from the correct epoch ---
-    for epoch in range(start_epoch, NUM_EPOCHS):
+    for epoch in range(NUM_EPOCHS):
         total_loss_d_normal, total_loss_d_forensic, total_loss_g = 0.0, 0.0, 0.0
+        
+        # --- YOUR IDEA: Logic to start EMA ---
+        # Note: epoch is 0-indexed, so `epoch == 5` is the *start* of the 6th epoch.
+        if not ema_active and epoch == EMA_START_EPOCH:
+            print(f"\n--- EMA SYNCING AT EPOCH {epoch+1} ---\n")
+            generator_ema.model.load_state_dict(generator.state_dict())
+            ema_active = True
         
         # --- Set dynamic lambda for the current epoch ---
         if (epoch + 1) < LAMBDA_SCHEDULE_EPOCH:
@@ -193,8 +171,9 @@ def train():
                 loss_g.backward()
                 g_optimizer.step()
                 
-                # --- Update the EMA generator's weights ---
-                generator_ema.update(generator)
+                # --- Only update EMA if it's active ---
+                if ema_active:
+                    generator_ema.update(generator)
                 
                 total_loss_g += loss_g.item()
 
@@ -221,23 +200,34 @@ def train():
         
         # --- Save generated images from fixed noise ---
         with torch.no_grad():
-            # --- Use the stable EMA generator for saving ---
-            generator_ema.model.eval()
-            fake_samples = generator_ema.model(fixed_noise).detach().cpu()
+            # --- UPDATED: Save from EMA if active, else save from raw generator ---
+            if ema_active:
+                generator_ema.model.eval()
+                fake_samples = generator_ema.model(fixed_noise).detach().cpu()
+            else:
+                generator.eval()
+                fake_samples = generator(fixed_noise).detach().cpu()
+                generator.train() # Set back to train mode
+
             save_image(fake_samples, os.path.join(OUTPUT_DIR, 'generated_images', f'epoch_{epoch+1}.png'), normalize=True, nrow=8)
 
         # --- Save checkpoints ---
         if (epoch + 1) % 5 == 0:
-            torch.save({
+            checkpoint_dict = {
                 'generator_state_dict': generator.state_dict(),
-                'generator_ema_state_dict': generator_ema.model.state_dict(), # --- Save EMA weights
                 'normal_discriminator_state_dict': normal_discriminator.state_dict(),
                 'forensic_discriminator_state_dict': forensic_discriminator.state_dict(),
                 'g_optimizer_state_dict': g_optimizer.state_dict(),
                 'd_optimizer_state_dict': d_optimizer.state_dict(),
                 'f_optimizer_state_dict': f_optimizer.state_dict(),
                 'epoch': epoch + 1,
-            }, os.path.join(OUTPUT_DIR, 'checkpoints', f'gan_checkpoint_epoch_{epoch+1}.pth'))
+            }
+            
+            # --- Only save EMA weights if it's active ---
+            if ema_active:
+                checkpoint_dict['generator_ema_state_dict'] = generator_ema.model.state_dict()
+                
+            torch.save(checkpoint_dict, os.path.join(OUTPUT_DIR, 'checkpoints', f'gan_checkpoint_epoch_{epoch+1}.pth'))
             print(f"Checkpoint saved for epoch {epoch+1}")
 
     print("\nTraining completed successfully!")
